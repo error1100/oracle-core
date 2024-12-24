@@ -21,7 +21,6 @@ use crate::oracle_types::Rate;
 use crate::spec_token::RewardTokenId;
 use crate::spec_token::SpecToken;
 use crate::wallet::WalletDataError;
-use crate::wallet::WalletDataSource;
 
 use ergo_lib::chain::ergo_box::box_builder::ErgoBoxCandidateBuilderError;
 use ergo_lib::ergo_chain_types::EcPoint;
@@ -30,9 +29,7 @@ use ergo_lib::ergotree_ir::chain::address::Address;
 use ergo_lib::ergotree_ir::chain::ergo_box::ErgoBoxCandidate;
 use ergo_lib::ergotree_ir::chain::token::TokenAmount;
 use ergo_lib::wallet::box_selector::BoxSelection;
-use ergo_lib::wallet::box_selector::BoxSelector;
 use ergo_lib::wallet::box_selector::BoxSelectorError;
-use ergo_lib::wallet::box_selector::SimpleBoxSelector;
 use ergo_lib::wallet::tx_builder::TxBuilder;
 use ergo_lib::wallet::tx_builder::TxBuilderError;
 use thiserror::Error;
@@ -70,7 +67,6 @@ pub fn build_refresh_action(
     datapoint_src: &dyn PostedDatapointBoxesSource,
     max_deviation_percent: u32,
     min_data_points: MinDatapoints,
-    wallet: &dyn WalletDataSource,
     height: BlockHeight,
     change_address: Address,
     my_oracle_pk: &EcPoint,
@@ -120,10 +116,6 @@ pub fn build_refresh_action(
         .map(|s| s.get_buyback_box())
         .transpose()?
         .flatten();
-
-    let unspent_boxes = wallet.get_unspent_wallet_boxes()?;
-    let box_selector = SimpleBoxSelector::new();
-    let selection = box_selector.select(unspent_boxes, tx_fee, &[])?;
 
     let mut input_boxes = vec![
         in_pool_box.get_box().clone(),
@@ -176,12 +168,11 @@ pub fn build_refresh_action(
         }
     };
     input_boxes.append(&mut valid_in_oracle_raw_boxes);
-    input_boxes.append(selection.boxes.as_vec().clone().as_mut());
     output_candidates.append(&mut out_oracle_boxes);
 
     let box_selection = BoxSelection {
         boxes: input_boxes.clone().try_into().unwrap(),
-        change_boxes: selection.change_boxes,
+        change_boxes: vec![],
     };
     let mut b = TxBuilder::new(
         box_selection,
@@ -341,6 +332,11 @@ fn build_out_oracle_boxes(
     valid_oracle_boxes
         .iter()
         .map(|in_ob| {
+            let value_new = if &in_ob.public_key() == my_public_key {
+                in_ob.get_box().value.checked_sub(&BASE_FEE).unwrap()
+            } else {
+                in_ob.get_box().value
+            };
             let mut reward_token_new = in_ob.reward_token();
             reward_token_new.amount = if &in_ob.public_key() == my_public_key {
                 let increment: TokenAmount =
@@ -358,7 +354,7 @@ fn build_out_oracle_boxes(
                 in_ob.public_key(),
                 in_ob.oracle_token(),
                 reward_token_new,
-                in_ob.get_box().value,
+                value_new,
                 creation_height,
             )
             .map_err(Into::into)
@@ -401,8 +397,7 @@ mod tests {
     use crate::pool_commands::test_utils::generate_token_ids;
     use crate::pool_commands::test_utils::BuybackBoxSourceMock;
     use crate::pool_commands::test_utils::{
-        find_input_boxes, make_datapoint_box, make_pool_box, make_wallet_unspent_box, PoolBoxMock,
-        WalletDataMock,
+        find_input_boxes, make_datapoint_box, make_pool_box, make_wallet_unspent_box, PoolBoxMock
     };
     use crate::pool_config::TokenIds;
     use crate::spec_token::TokenIdKind;
@@ -566,15 +561,6 @@ mod tests {
             "9iHyKxXs2ZNLMp9N9gbUT9V8gTbsV7HED1C1VhttMfBUMPDyF7r",
         )
         .unwrap();
-        let wallet_unspent_box = make_wallet_unspent_box(
-            secret.public_image(),
-            BASE_FEE.checked_mul_u32(10000).unwrap(),
-            None,
-        );
-        let wallet_mock = WalletDataMock {
-            unspent_boxes: vec![wallet_unspent_box],
-            change_address: change_address.clone(),
-        };
 
         let (action, report) = build_refresh_action(
             &pool_box_mock,
@@ -584,7 +570,6 @@ mod tests {
             }),
             5,
             MinDatapoints(4),
-            &wallet_mock,
             height,
             change_address.address(),
             &oracle_pub_key,
@@ -603,7 +588,6 @@ mod tests {
                 .clone(),
         ];
         possible_input_boxes.append(&mut in_oracle_boxes_raw);
-        possible_input_boxes.append(&mut wallet_mock.get_unspent_wallet_boxes().unwrap());
 
         let tx_context = TransactionContext::new(
             action.tx.clone(),
@@ -631,7 +615,6 @@ mod tests {
             &wrong_epoch_id_datapoints_mock,
             5,
             MinDatapoints(4),
-            &wallet_mock,
             height,
             change_address.address(),
             &oracle_pub_key,
@@ -680,7 +663,6 @@ mod tests {
             }),
             5,
             MinDatapoints(4),
-            &wallet_mock,
             height,
             change_address.address(),
             &oracle_pub_key,

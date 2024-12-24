@@ -115,7 +115,6 @@ pub fn build_action(
                 .contract_inputs
                 .contract_parameters()
                 .min_data_points(),
-            wallet,
             height,
             change_address,
             &oracle_public_key,

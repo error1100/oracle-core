@@ -16,7 +16,7 @@ use crate::{
     action_report::PublishDatapointActionReport,
     actions::PublishDataPointAction,
     box_kind::{make_oracle_box_candidate, OracleBox, OracleBoxWrapper, OracleBoxWrapperInputs},
-    contracts::oracle::{OracleContract, OracleContractError},
+    contracts::oracle::{OracleContract, OracleContractError, OracleContractParameters},
     datapoint_source::{DataPointSource, DataPointSourceError},
     oracle_config::BASE_FEE,
     oracle_state::DataSourceError,
@@ -66,6 +66,8 @@ pub fn build_subsequent_publish_datapoint_action(
         in_oracle_box.reward_token()
     };
 
+    let oracle_box_value = OracleContractParameters::default().min_storage_rent.checked_add(&BASE_FEE).unwrap();
+
     let output_candidate = make_oracle_box_candidate(
         in_oracle_box.contract(),
         in_oracle_box.public_key(),
@@ -73,7 +75,7 @@ pub fn build_subsequent_publish_datapoint_action(
         new_epoch_counter,
         in_oracle_box.oracle_token(),
         outbox_reward_tokens.clone(),
-        in_oracle_box.get_box().value,
+        oracle_box_value,
         height,
     )?;
 
@@ -84,9 +86,9 @@ pub fn build_subsequent_publish_datapoint_action(
         in_oracle_box.oracle_token().into(),
         outbox_reward_tokens.into(),
     ];
-    let target_balace = in_oracle_box.get_box().value.checked_add(&tx_fee).unwrap();
+    let target_balance = oracle_box_value.checked_add(&tx_fee).unwrap();
     unspent_boxes.push(in_oracle_box.get_box().clone());
-    let selection = box_selector.select(unspent_boxes, target_balace, target_tokens.as_slice())?;
+    let selection = box_selector.select(unspent_boxes, target_balance, target_tokens.as_slice())?;
     let mut tx_builder = TxBuilder::new(
         selection,
         vec![output_candidate],
