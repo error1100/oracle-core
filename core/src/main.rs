@@ -68,6 +68,7 @@ use metrics::start_metrics_server;
 use metrics::update_metrics;
 use node_interface::node_api::NodeApi;
 use node_interface::try_ensure_wallet_unlocked;
+use once_cell::sync::Lazy;
 use oracle_config::ORACLE_CONFIG;
 use oracle_config::ORACLE_SECRETS;
 use oracle_state::OraclePool;
@@ -117,6 +118,10 @@ const APP_VERSION: &str = concat!(
     " ",
     env!("GIT_COMMIT_DATE")
 );
+
+static SLEEP_MS: Lazy<u64> = Lazy::new(|| {
+    env::var("SLEEP_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(10000)
+});
 
 #[derive(Debug, Parser)]
 #[clap(author, version = APP_VERSION, about, long_about = None)]
@@ -378,7 +383,7 @@ fn main() {
                     error!("error: {:?}", e);
                 }
                 // Delay loop restart
-                thread::sleep(Duration::new(30, 0));
+                thread::sleep(Duration::from_millis(*SLEEP_MS));
             }
         }
         oracle_command => handle_pool_command(oracle_command, &node_api, network_prefix),
